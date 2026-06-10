@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Alternate slide output (see README: build-slides.py -o slides.new.pptx)
+slides.new.pptx
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db

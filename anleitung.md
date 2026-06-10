@@ -20,9 +20,9 @@
 8. [Schritt 5 – Aufrufer prüfen: das JWT im Code validieren](#schritt-5--aufrufer-prüfen-das-jwt-im-code-validieren)
 9. [Schritt 6 – SharePoint-Zugriff mit PnPjs (app-only)](#schritt-6--sharepoint-zugriff-mit-pnpjs-app-only)
 10. [Schritt 7 – Alles im HTTP-Handler verdrahten](#schritt-7--alles-im-http-handler-verdrahten)
-11. [Schritt 8 – Lokal testen](#schritt-8--lokal-testen)
-12. [Schritt 9 – Nach Azure deployen](#schritt-9--nach-azure-deployen)
-13. [Schritt 10 – Entra-App-Registrierung + Sicherheitsgruppe](#schritt-10--entra-app-registrierung--sicherheitsgruppe)
+11. [Schritt 8 – Entra-App-Registrierung + Sicherheitsgruppe](#schritt-8--entra-app-registrierung--sicherheitsgruppe)
+12. [Schritt 9 – Lokal testen](#schritt-9--lokal-testen)
+13. [Schritt 10 – Nach Azure deployen](#schritt-10--nach-azure-deployen)
 14. [Schritt 11 – Managed Identity berechtigen (Sites.Selected)](#schritt-11--managed-identity-berechtigen-sitesselected)
 15. [Schritt 12 – End-to-End testen](#schritt-12--end-to-end-testen)
 16. [C# vs. TypeScript – gegenübergestellt](#c-vs-typescript--gegenübergestellt)
@@ -702,7 +702,41 @@ Vergleiche das mit der „Hello world"-Version aus Schritt 2 – die **Struktur*
 
 ---
 
-## Schritt 8 – Lokal testen
+## Schritt 8 – Entra-App-Registrierung + Sicherheitsgruppe
+
+Das ist die Konfiguration für die **erste** Vertrauensgrenze (Aufrufer-Token). Sie ist
+**identisch** zur C#-Lösung – es geht um Identität und Token, nicht um die Sprache. Wir
+erledigen das **vor** dem lokalen Test und dem Deployen, weil dabei die **Client-ID** (der
+App-Registrierung) und die **Object-ID der Gruppe** entstehen – beide brauchen die folgenden
+Schritte als Konfigurationswerte.
+
+### a) App-Registrierung „ManagePermissions API"
+
+1. **Entra ID → App registrations → New registration** → Name `ManagePermissions API`,
+   **Single tenant**. Die **Application (client) ID** ist dein `AzureAd__ClientId`.
+2. **Expose an API** → Application ID URI `api://<client-id>` → **Add a scope**:
+   - Scope: `access_as_user`, Who can consent: **Admins and users**, State: **Enabled**.
+3. **Token-Version auf 2 setzen** (sonst stimmt der Issuer nicht → 401):
+   - **Manage → Manifest** → `requestedAccessTokenVersion` von `null` auf `2` → **Save**.
+   - Kontrolle über <https://jwt.ms>: Claim `ver` muss `2.0` sein.
+4. **Gruppen-Claim aktivieren** (sonst fehlt `groups` → 403 für alle):
+   - **Manage → Token configuration → + Add groups claim** → **Groups assigned to the
+     application** ankreuzen → Token-Typ **Access** → **Save**.
+
+### b) Sicherheitsgruppe der berechtigten Aufrufer
+
+1. **Entra ID → Groups → New group** → Typ **Security**, z. B. `ManagePermissions-Caller`.
+   Berechtigte Benutzer als Mitglieder hinzufügen. Die **Object Id** ist dein
+   `AzureAd__AllowedGroupId`.
+2. Damit der Gruppen-Claim erscheint: **Entra ID → Enterprise applications →
+   `ManagePermissions API` → Users and groups** → die Sicherheitsgruppe **zuweisen**.
+
+> Notiere dir die **Client-ID** und die **Object-ID der Gruppe** – beide setzt du gleich in
+> `local.settings.json` (Schritt 9) und als App Settings beim Deployen (Schritt 10.4) ein.
+
+---
+
+## Schritt 9 – Lokal testen
 
 Lokal nutzt `DefaultAzureCredential` deine **Azure-CLI-Anmeldung** statt der Managed Identity.
 So testest du gegen echtes SharePoint, ohne etwas zu deployen.
@@ -759,7 +793,7 @@ So testest du gegen echtes SharePoint, ohne etwas zu deployen.
 
 ---
 
-## Schritt 9 – Nach Azure deployen
+## Schritt 10 – Nach Azure deployen
 
 Jetzt legen wir die Cloud-Ressourcen an und veröffentlichen den Code. Wir nutzen den
 **Flex Consumption Plan** (aktuell empfohlen: serverless, scale-to-zero, Node 22).
@@ -811,37 +845,6 @@ Der Endpunkt lautet danach:
 
 ---
 
-## Schritt 10 – Entra-App-Registrierung + Sicherheitsgruppe
-
-Das ist die Konfiguration für die **erste** Vertrauensgrenze (Aufrufer-Token). Sie ist
-**identisch** zur C#-Lösung – es geht um Identität und Token, nicht um die Sprache.
-
-### a) App-Registrierung „ManagePermissions API"
-
-1. **Entra ID → App registrations → New registration** → Name `ManagePermissions API`,
-   **Single tenant**. Die **Application (client) ID** ist dein `AzureAd__ClientId`.
-2. **Expose an API** → Application ID URI `api://<client-id>` → **Add a scope**:
-   - Scope: `access_as_user`, Who can consent: **Admins and users**, State: **Enabled**.
-3. **Token-Version auf 2 setzen** (sonst stimmt der Issuer nicht → 401):
-   - **Manage → Manifest** → `requestedAccessTokenVersion` von `null` auf `2` → **Save**.
-   - Kontrolle über <https://jwt.ms>: Claim `ver` muss `2.0` sein.
-4. **Gruppen-Claim aktivieren** (sonst fehlt `groups` → 403 für alle):
-   - **Manage → Token configuration → + Add groups claim** → **Groups assigned to the
-     application** ankreuzen → Token-Typ **Access** → **Save**.
-
-### b) Sicherheitsgruppe der berechtigten Aufrufer
-
-1. **Entra ID → Groups → New group** → Typ **Security**, z. B. `ManagePermissions-Caller`.
-   Berechtigte Benutzer als Mitglieder hinzufügen. Die **Object Id** ist dein
-   `AzureAd__AllowedGroupId`.
-2. Damit der Gruppen-Claim erscheint: **Entra ID → Enterprise applications →
-   `ManagePermissions API` → Users and groups** → die Sicherheitsgruppe **zuweisen**.
-
-> Stelle anschließend sicher, dass `AzureAd__ClientId` und `AzureAd__AllowedGroupId` als App
-> Settings gesetzt sind (Schritt 9.4).
-
----
-
 ## Schritt 11 – Managed Identity berechtigen (Sites.Selected)
 
 Das ist die **zweite** Vertrauensgrenze (Function → SharePoint). Die Managed Identity bekommt
@@ -862,7 +865,7 @@ In einer frischen `pwsh`-Session (Microsoft.Graph-Modul):
 ```powershell
 Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All","Application.Read.All"
 
-$miObjectId = "<principalId-der-MI aus Schritt 9.3>"
+$miObjectId = "<principalId-der-MI aus Schritt 10.3>"
 
 # Graph: Sites.Selected
 $graph = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
@@ -992,8 +995,8 @@ und das `Sites.Selected`-Berechtigungsmodell der Managed Identity.
 
 | Symptom | Wahrscheinliche Ursache | Lösung |
 |---|---|---|
-| Jeder Aufruf **401**, Token sieht gültig aus | App-Registrierung stellt **v1.0**-Tokens aus → Issuer passt nicht | `requestedAccessTokenVersion` im Manifest auf `2` setzen (Schritt 10.a.3) |
-| **403** „nicht Mitglied der berechtigten Gruppe" trotz Mitgliedschaft | `groups`-Claim fehlt im Token | Gruppen-Claim aktivieren **und** Gruppe der Enterprise-App zuweisen (Schritt 10) |
+| Jeder Aufruf **401**, Token sieht gültig aus | App-Registrierung stellt **v1.0**-Tokens aus → Issuer passt nicht | `requestedAccessTokenVersion` im Manifest auf `2` setzen (Schritt 8.a.3) |
+| **403** „nicht Mitglied der berechtigten Gruppe" trotz Mitgliedschaft | `groups`-Claim fehlt im Token | Gruppen-Claim aktivieren **und** Gruppe der Enterprise-App zuweisen (Schritt 8) |
 | **403** „Group-Overage" | Benutzer ist in sehr vielen Gruppen | „**Groups assigned to the application**" statt „All groups" wählen |
 | **502** „Zugriff verweigert (Sites.Selected + FullControl)" | MI-Berechtigung fehlt oder noch nicht propagiert | Schritt 11 prüfen; `az functionapp stop`/`start`; ggf. bis zu ~24 h Token-Cache abwarten |
 | **404** „Benutzer wurde nicht gefunden" | UPN existiert nicht / Tippfehler | UPN prüfen; reine Cloud-Konten haben evtl. kein `mail`, aber `EnsureUser` nutzt den UPN |

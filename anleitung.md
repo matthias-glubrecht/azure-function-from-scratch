@@ -448,8 +448,11 @@ export async function authorizeCaller(
 
 ## Schritt 6 – SharePoint-Zugriff mit PnPjs (app-only)
 
-Das ist die **zweite Vertrauensgrenze**. Hier greift die Function mit **ihrer eigenen**
-Identität (Managed Identity) auf SharePoint zu.
+Das ist die **zweite Vertrauensgrenze**. **In Azure** greift die Function mit **ihrer eigenen**
+Identität (Managed Identity, app-only) auf SharePoint zu – abgesichert durch `Sites.Selected`.
+**Lokal** gibt es keine Managed Identity: Dort fällt `DefaultAzureCredential` auf deine
+`az login`-Anmeldung zurück, der Zugriff läuft also **delegiert mit deinem eigenen Konto**
+(Details im Hinweis zu Schritt 9).
 
 Lege `src/services/sharePointPermissionService.ts` an:
 
@@ -722,6 +725,12 @@ Schritte als Konfigurationswerte.
 4. **Gruppen-Claim aktivieren** (sonst fehlt `groups` → 403 für alle):
    - **Manage → Token configuration → + Add groups claim** → **Groups assigned to the
      application** ankreuzen → Token-Typ **Access** → **Save**.
+5. **Nur für den lokalen Test (Schritt 9): die Azure CLI vorab autorisieren.** Die `az`-CLI
+   ist eine eigene Client-App – für eine **eigene** API muss sie erst berechtigt werden.
+   **Expose an API → Authorized client applications → Add a client application** → Client-ID
+   der Azure CLI `04b07795-8ddb-461a-bbee-02f9e1bf7b46` eintragen, Scope `access_as_user`
+   ankreuzen. Ohne diese Freischaltung kann `az account get-access-token` kein Token für die
+   API ausstellen.
 
 ### b) Sicherheitsgruppe der berechtigten Aufrufer
 
@@ -740,6 +749,20 @@ Schritte als Konfigurationswerte.
 
 Lokal nutzt `DefaultAzureCredential` deine **Azure-CLI-Anmeldung** statt der Managed Identity.
 So testest du gegen echtes SharePoint, ohne etwas zu deployen.
+
+> **Wichtig – was du lokal NICHT testest:** Lokal gibt es keine Managed Identity. Der
+> SharePoint-Zugriff läuft **delegiert** mit den Rechten deines `az login`-Kontos
+> (`AzureCliCredential`), **nicht** app-only über `Sites.Selected`. Daraus folgt:
+>
+> - Dein angemeldetes Konto muss selbst **FullControl auf der Ziel-Site** haben – sonst
+>   scheitern `breakRoleInheritance`/`roleAssignments.add`.
+> - Das eigentliche Sicherheitsmodell der Function (least privilege via `Sites.Selected` +
+>   `FullControl` der MI) wird hier **nicht** geprüft. Den echten app-only-Pfad testest du
+>   erst **nach dem Deploy** (Schritt 11 richtet die MI-Rechte ein, Schritt 12 läuft über die
+>   Managed Identity).
+>
+> Der lokale Test prüft also die **Geschäftslogik** (Rolle auflösen, Vererbung trennen,
+> Berechtigung setzen), nicht das MI-Berechtigungsmodell.
 
 1. **`local.settings.json`** mit deinen Werten füllen (diese Datei wird **nicht** deployt):
 
@@ -788,8 +811,11 @@ So testest du gegen echtes SharePoint, ohne etwas zu deployen.
        -ContentType "application/json" -Body $body
    ```
 
-> Das `az`-CLI-Token enthält den Scope `access_as_user` nur, wenn die Tenant-Richtlinien das
-> zulassen. Für einen realistischen Test rufst du später über das SPFx-Web-Part auf.
+> **Voraussetzung:** Die **Azure CLI muss für die API autorisiert sein** (Schritt 8.a.5),
+> sonst liefert `az account get-access-token` kein Token (`AADSTS65001`) bzw. der `scp`-Claim
+> enthält kein `access_as_user` → die Function antwortet mit 403. Für einen realistischen
+> Test rufst du später über das SPFx-Web-Part auf – nach der API-Access-Genehmigung ist es
+> der autorisierte Client.
 
 ---
 
@@ -839,8 +865,10 @@ Der Endpunkt lautet danach:
 `https://<app-host>.azurewebsites.net/api/ManagePermissions`
 
 > Den genauen Host findest du mit
-> `az functionapp show -n $app -g $rg --query defaultHostName -o tsv`. Auf Flex hat der Host
-> ein Region-/Hash-Suffix – nimm immer den **echten** `defaultHostName`, nicht
+> `az functionapp show -n $app -g $rg --query "defaultHostName || hostNames[0]" -o tsv`.
+> Auf Flex hat der Host ein Region-/Hash-Suffix – und `defaultHostName` ist dort oft **leer**;
+> der echte Host liegt dann im `hostNames`-Array. Der `||`-Ausdruck nimmt `defaultHostName`,
+> wenn gefüllt, sonst `hostNames[0]`. Nimm immer den **echten** Host, nicht
 > `<app>.azurewebsites.net`.
 
 ---
@@ -920,8 +948,10 @@ Grant-PnPAzureADAppSitePermission `
 ## Schritt 12 – End-to-End testen
 
 ```powershell
-$host  = az functionapp show -n func-wsperms-ts -g rg-workshop --query defaultHostName -o tsv
-$token = az account get-access-token --resource api://<client-id> --query accessToken -o tsv
+# $host ist in PowerShell reserviert (Konsole) -> eigener Variablenname.
+# Auf Flex ist defaultHostName oft leer -> Fallback auf hostNames[0].
+$appHost = az functionapp show -n func-wsperms-ts -g rg-workshop --query "defaultHostName || hostNames[0]" -o tsv
+$token   = az account get-access-token --resource api://<client-id> --query accessToken -o tsv
 
 $body = @{
     action            = "grant"
@@ -932,7 +962,7 @@ $body = @{
     permissionLevel   = "Contribute"
 } | ConvertTo-Json
 
-Invoke-RestMethod -Method Post -Uri "https://$host/api/ManagePermissions" `
+Invoke-RestMethod -Method Post -Uri "https://$appHost/api/ManagePermissions" `
     -Headers @{ Authorization = "Bearer $token" } `
     -ContentType "application/json" -Body $body
 # -> { ok = True; message = "'Contribute' für user@domain.com auf Element 1 gesetzt." }
